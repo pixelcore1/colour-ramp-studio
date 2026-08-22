@@ -726,7 +726,7 @@ code{font-family:var(--mono);font-size:11px;background:#F2F2F4;padding:1px 4px;b
      it here, and the panel still probes candidates at runtime. -->
 <script>
 window.__FIGMA_TOOLS__  = [];
-window.__FIGMA_STATUS__ = "This copy was not bound to a Figma MCP server. Run the figma-colour-ramps skill so it can resolve the live tool name for this session.";
+window.__FIGMA_STATUS__ = "";
 </script>
 <!-- ===== FIGMA-TOOL-BINDING:END ===== -->
 
@@ -2984,6 +2984,51 @@ function figmaWherePicker(){
   return box;
 }
 
+function figmaWhereOffline(){
+  const f = fig();
+  if (!figCreatingCollection() && !figCollection()){ f.collectionId = NEW_COLLECTION; }
+  if (!(f.newName || '').trim()) f.newName = FIGMA_COLLECTION;
+  const box = el('div','where');
+  const hd = el('div','where-hd');
+  hd.appendChild(el('span','lbl','Where to write'));
+  box.appendChild(hd);
+  box.appendChild(el('p','hint','No file was read, so type the address yourself. '
+    + 'The agent finds a collection with this name, or creates it.'));
+  const row = el('div','where-row'); row.style.marginTop='8px';
+
+  const cWrap = el('label','where-f');
+  cWrap.appendChild(el('span','where-t','Collection'));
+  const inp = el('input','inp');
+  inp.value = f.newName || '';
+  inp.placeholder = FIGMA_COLLECTION;
+  inp.oninput = function(){
+    f.newName = inp.value;
+    const o = figmaHost.querySelector('.where-out');
+    if (o) o.innerHTML = figmaWhereSample();
+  };
+  cWrap.appendChild(inp);
+  row.appendChild(cWrap);
+
+  const gWrap = el('label','where-f');
+  gWrap.appendChild(el('span','where-t','Group <span class="where-opt">optional</span>'));
+  const g = el('input','inp');
+  g.value = f.group || '';
+  g.placeholder = 'none — ramps sit at the root';
+  g.oninput = function(){
+    f.group = g.value;
+    const o = figmaHost.querySelector('.where-out');
+    if (o) o.innerHTML = figmaWhereSample();
+  };
+  gWrap.appendChild(g);
+  row.appendChild(gWrap);
+  box.appendChild(row);
+
+  const out = el('div','where-out');
+  out.innerHTML = figmaWhereSample();
+  box.appendChild(out);
+  return box;
+}
+
 function figmaWhereSample(){
   const name = figCollectionName();
   if (!name) return '<span class="where-warn">Give the new collection a name.</span>';
@@ -3023,11 +3068,7 @@ function renderFigmaPanel(){
   const unbound = !figmaBridgeReady() || !(window.__FIGMA_TOOLS__ || []).length;
   if (unbound){
     const w = el('div','status warn');
-    w.innerHTML = '<b>Figma is not connected in this session.</b> '
-      + (window.__FIGMA_STATUS__ || 'The Figma MCP server was not available when this view was built, so writing straight into a file is unavailable.')
-      + '<ul><li>Authorise the Figma connector, then ask the agent to rebuild this view.</li>'
-      + '<li>Make sure the Figma desktop app is running with its MCP server enabled.</li>'
-      + '<li>Copy or Download above still produces the full variable manifest.</li></ul>';
+    w.innerHTML = bridgeNotice();
     s1.appendChild(w);
   }
   const r1 = el('div','row'); r1.style.marginTop='9px';
@@ -3063,6 +3104,12 @@ function renderFigmaPanel(){
           : 'no variable collections yet');
     s1.appendChild(st);
     s1.appendChild(figmaWherePicker());
+  }
+  /* no bridge and no successful connect: there is no collection list to
+     choose from, but the address still has to be decidable — the agent
+     needs to be told where to write */
+  if (f.status !== 'ok' && !figmaBridgeReady()){
+    s1.appendChild(figmaWhereOffline());
 
     const clashes = figmaTargets().filter(function(t){ return t.clash; });
     if (clashes.length){
@@ -3079,7 +3126,9 @@ function renderFigmaPanel(){
 
   /* ---------- step 2 ---------- */
   const s2 = el('div','ex-step');
-  if (f.status!=='ok') s2.setAttribute('data-off','');
+  /* with no bridge the connect step can never succeed, and greying the
+     rest out would hide the one route that still works */
+  if (f.status!=='ok' && figmaBridgeReady()) s2.setAttribute('data-off','');
   const s2h = el('h5'); s2h.innerHTML = '<span class="ex-num">2</span> What will be written';
   s2.appendChild(s2h);
   const targets = figmaTargets();
@@ -3167,7 +3216,7 @@ function renderFigmaPanel(){
   /* ---------- step 3 ---------- */
   const s3 = el('div','ex-step');
   const unresolved = figmaConflictsUnresolved();
-  if (f.status!=='ok') s3.setAttribute('data-off','');
+  if (f.status!=='ok' && figmaBridgeReady()) s3.setAttribute('data-off','');
   const s3h = el('h5'); s3h.innerHTML = '<span class="ex-num">3</span> Write';
   s3.appendChild(s3h);
   const wr = f.write;
@@ -3252,6 +3301,35 @@ function figmaCandidates(){
   return out;
 }
 function figmaBridgeReady(){ return !!(window.cowork && typeof window.cowork.callMcpTool === 'function'); }
+/* Two very different failures wear the same face — "Figma does not work"
+   — and the fix for each is nothing like the fix for the other. Say
+   which one it is instead of offering a list and hoping. */
+function bridgeDiag(){
+  if (!window.cowork)
+    return { code:'no-runtime',
+      what:'This page is not running as a Cowork artifact, so there is no bridge to Figma at all.',
+      fix:['The agent must publish it with <code>mcp__cowork__create_artifact</code>. '
+         + 'The editor\u2019s own artifact tool and a plain HTML file both look the same on screen but carry no bridge.',
+           'The Cowork session also has to be running <b>On my computer</b>, not in the cloud.'] };
+  if (typeof window.cowork.callMcpTool !== 'function')
+    return { code:'no-call',
+      what:'The Cowork runtime is here but exposes no way to call MCP tools.',
+      fix:['Ask the agent to republish this view.'] };
+  if (!(window.__FIGMA_TOOLS__ || []).length)
+    return { code:'no-tools',
+      what:'The bridge is live, but no Figma MCP tool was declared for this view.',
+      fix:['Authorise the Figma connector, then ask the agent to rebuild this view so it can resolve the tool name.',
+           'Make sure the Figma desktop app is running with its MCP server enabled.'] };
+  return { code:'ok', what:'', fix:[] };
+}
+function bridgeNotice(){
+  const d = bridgeDiag();
+  return '<b>Figma is not connected in this session.</b> '
+    + (window.__FIGMA_STATUS__ ? window.__FIGMA_STATUS__ + ' ' : '') + d.what
+    + '<ul>' + d.fix.map(function(f){ return '<li>' + f + '</li>'; }).join('')
+    + '<li>Meanwhile authoring, image extraction, contrast and every export work as normal, '
+    + 'and <b>Paste tokens</b> reads a file with no connection at all.</li></ul>';
+}
 function looksLikeMissingTool(msg){
   return /unknown tool|no such tool|not found|not available|unrecognis|unrecogniz|not permitted|not allowed|disallow/i.test(String(msg||''));
 }
@@ -3305,7 +3383,17 @@ async function figmaRun(fileKey, code, description){
   let payload = r && r.structuredContent;
   if (payload === undefined || payload === null){
     try { payload = JSON.parse(txt); }
-    catch(err){ const e = new Error(txt || 'Figma returned an empty response'); e.code='BAD_PAYLOAD'; throw e; }
+    catch(err){
+      /* the bridge caps a result at about 20 KB and appends a marker;
+         what arrives is valid JSON with its tail bitten off, so say that
+         rather than dumping the fragment at the user */
+      if (/truncated to \d+\s*kb/i.test(txt)){
+        const e = new Error('The reply was truncated by the bridge before it was complete.');
+        e.code = 'TRUNCATED'; throw e;
+      }
+      const e = new Error(String(txt || 'Figma returned an empty response').slice(0, 300));
+      e.code = 'BAD_PAYLOAD'; throw e;
+    }
   }
   return payload;
 }
@@ -4488,7 +4576,12 @@ function imPretty(s){
   return String(s||'').replace(/[-_]+/g,' ').replace(/\b\w/g,function(m){ return m.toUpperCase(); }).trim() || 'Ramp';
 }
 
-const IM_SCAN =
+/* The bridge truncates a tool result at about 20 KB, and a real design
+   system blows past that in one file — the reply comes back cut in half
+   and stops being JSON. So the scan is paged: one small call for the
+   shape of the file, then slices of variables in a compact array form
+   that carries roughly a third of the bytes of the object form. */
+const IM_RESOLVER =
 "function toHex(c){\n" +
 "  function h(v){ var n=Math.round(Math.max(0,Math.min(1,v))*255).toString(16); return n.length<2?'0'+n:n; }\n" +
 "  return ('#'+h(c.r)+h(c.g)+h(c.b)).toUpperCase();\n" +
@@ -4512,20 +4605,59 @@ const IM_SCAN =
 "  }\n" +
 "  if (typeof val.r === 'number') return { hex: toHex(val), alpha: (val.a===undefined?1:val.a) };\n" +
 "  return null;\n" +
-"}\n" +
+"}\n";
+
+/* one call: what collections exist, how big each is */
+const IM_SCAN_META = IM_RESOLVER +
 "return { fileName: figma.root.name, editorType: figma.editorType,\n" +
 "  collections: cols.map(function(c){\n" +
 "    var mine = all.filter(function(v){ return v.variableCollectionId === c.id; });\n" +
 "    var colours = mine.filter(function(v){ return v.resolvedType === 'COLOR'; });\n" +
 "    return { id:c.id, name:c.name,\n" +
 "      modes: c.modes.map(function(m){ return { id:m.modeId, name:m.name }; }),\n" +
-"      otherTypes: mine.length - colours.length,\n" +
-"      variables: colours.map(function(v){\n" +
-"        var vals = {};\n" +
-"        c.modes.forEach(function(m){ vals[m.modeId] = resolve(v.valuesByMode[m.modeId], m.modeId, 0) || null; });\n" +
-"        return { id:v.id, key:v.key, name:v.name, values:vals };\n" +
-"      }) };\n" +
+"      otherTypes: mine.length - colours.length, count: colours.length };\n" +
 "  }) };";
+
+/* one call: a slice of one collection, as [id, key, name, hex|null, alpha, aliasOf]
+   per mode — short field names would still repeat on every row, arrays do not */
+function imScanPageScript(collectionId, offset, limit){
+  return IM_RESOLVER +
+  "const COL_ID = " + JSON.stringify(collectionId) + ";\n" +
+  "const OFFSET = " + offset + ", LIMIT = " + limit + ";\n" +
+  "var col = null; for (var i=0;i<cols.length;i++) if (cols[i].id === COL_ID) col = cols[i];\n" +
+  "if (!col) throw new Error('That collection is no longer in the file');\n" +
+  "var colours = all.filter(function(v){ return v.variableCollectionId === COL_ID && v.resolvedType === 'COLOR'; });\n" +
+  "var slice = colours.slice(OFFSET, OFFSET + LIMIT);\n" +
+  "var modeIds = col.modes.map(function(m){ return m.modeId; });\n" +
+  "return { total: colours.length, offset: OFFSET, modeIds: modeIds,\n" +
+  "  rows: slice.map(function(v){\n" +
+  "    var vals = modeIds.map(function(mid){\n" +
+  "      var r = resolve(v.valuesByMode[mid], mid, 0);\n" +
+  "      if (!r) return 0;\n" +
+  "      if (r.unresolved) return 1;\n" +
+  "      return r.aliasOf ? [r.hex, r.alpha, r.aliasOf] : (r.alpha === 1 ? r.hex : [r.hex, r.alpha]);\n" +
+  "    });\n" +
+  "    return [v.id, v.key, v.name, vals];\n" +
+  "  }) };";
+}
+/* how many variables to ask for at once — sized so a page stays well
+   inside the 20 KB ceiling even with long names and several modes */
+const IM_PAGE = 60;
+
+/* rows come back terse; put them back into the shape the tree expects */
+function imRowsToVariables(rows, modeIds){
+  return rows.map(function(r){
+    const vals = {};
+    (r[3] || []).forEach(function(v, i){
+      const mid = modeIds[i];
+      if (v === 0){ vals[mid] = null; return; }
+      if (v === 1){ vals[mid] = { unresolved:true }; return; }
+      if (typeof v === 'string'){ vals[mid] = { hex:v, alpha:1 }; return; }
+      vals[mid] = { hex:v[0], alpha:v[1], aliasOf:v[2] };
+    });
+    return { id:r[0], key:r[1], name:r[2], values:vals };
+  });
+}
 
 /* ---- tree ---- */
 function imBuildTree(scan){
@@ -4726,12 +4858,37 @@ async function imScan(){
   }
   im.key = key;
   try {
-    const res = await figmaRun(key, IM_SCAN, 'List every variable collection and colour variable in the file, resolving aliases');
-    if (res.editorType !== 'figma'){
-      im.status='error'; im.error='This is a ' + res.editorType + ' file. Variables live in Figma design files only.';
+    const meta = await figmaRun(key, IM_SCAN_META,
+      'List the variable collections in the file with their modes and sizes');
+    if (meta.editorType !== 'figma'){
+      im.status='error'; im.error='This is a ' + meta.editorType + ' file. Variables live in Figma design files only.';
       imRender(); return;
     }
-    im.file = { name:res.fileName };
+    im.file = { name:meta.fileName };
+
+    /* then the variables themselves, a slice at a time, so no single
+       reply can be cut off by the bridge's size ceiling */
+    const total = meta.collections.reduce(function(a,c){ return a + (c.count||0); }, 0);
+    let done = 0;
+    const res = { fileName:meta.fileName, editorType:meta.editorType, fileKey:key, collections:[] };
+    for (let i=0; i<meta.collections.length; i++){
+      const c = meta.collections[i];
+      const variables = [];
+      for (let off=0; off < (c.count||0); off += IM_PAGE){
+        im.progress = { done:done, total:total, collection:c.name };
+        imRender();
+        const page = await figmaRun(key, imScanPageScript(c.id, off, IM_PAGE),
+          'Read colour variables ' + (off+1) + '–' + Math.min(off+IM_PAGE, c.count) + ' of ' + c.name);
+        const got = imRowsToVariables(page.rows || [], page.modeIds || []);
+        got.forEach(function(v){ variables.push(v); });
+        done += got.length;
+        if (!got.length) break;   /* nothing came back — stop rather than loop */
+      }
+      res.collections.push({ id:c.id, name:c.name, modes:c.modes,
+                             otherTypes:c.otherTypes, variables:variables });
+    }
+    im.progress = null;
+
     im.scan = res; im.modes = {}; im.sel = {}; im.open = {}; im.singles = {};
     res.collections.forEach(function(c){ if (c.modes[0]) im.modes[c.id] = c.modes[0].id; });
     im.tree = imBuildTree(res);
@@ -4740,15 +4897,19 @@ async function imScan(){
     fig().url = im.url; save();
     imRender();
   } catch(e){
-    im.status='error';
+    im.status='error'; im.progress = null;
     if (e.code==='NO_BRIDGE'){
       im.error='This view cannot reach Figma from here.';
       im.hints=['Open the tool inside Cowork, where the Figma connector is available.','Meanwhile, paste a token file on the other tab.'];
     } else if (e.code==='NO_TOOL'){
       im.error='The Figma MCP server did not answer in this session.';
       im.hints=['Authorise the Figma connector, then ask the agent to rebuild this view.'];
+    } else if (e.code==='TRUNCATED'){
+      im.error='The reply from Figma came back cut short.';
+      im.hints=['This file is unusually wide — a single variable carries more than one page can hold.',
+                'Try again; if it keeps happening, read it with Paste tokens instead.'];
     } else {
-      im.error = e.message || String(e);
+      im.error = String(e.message || e).slice(0, 300);
       im.hints=['Confirm you can open this file in Figma yourself.','If the link points at a branch, use the branch key.'];
     }
     imRender();
@@ -4756,11 +4917,37 @@ async function imScan(){
 }
 
 /* ---- pasted tokens become the same tree ---- */
+function normKey(v){ const x = String(v||'').trim(); return x ? (parseFigmaKey(x) || x) : ''; }
 function imParsePaste(){
   im.pasteError = null;
   let data;
   try { data = JSON.parse(im.paste); }
   catch(e){ im.pasteError = 'That is not valid JSON.'; imRender(); return; }
+
+  /* A scan handed back by the agent is the same object this tool would
+     have fetched itself, variable ids included — so take it as one.
+     Tokens carry no ids, and a ramp without ids can never be overwritten
+     in place; this is what keeps a reskin possible with no bridge. */
+  if (data && Array.isArray(data.collections)
+      && data.collections.some(function(c){ return Array.isArray(c.variables); })){
+    const bad = [];
+    data.collections.forEach(function(c){
+      if (!c.id || !Array.isArray(c.modes) || !c.modes.length) bad.push(c.name || 'a collection');
+    });
+    if (bad.length){
+      im.pasteError = 'That looks like a scan, but ' + bad.slice(0,3).join(', ') + ' has no id or modes. '
+        + 'Ask the agent to return the script result unchanged.';
+      imRender(); return;
+    }
+    im.file = { name: data.fileName || 'Pasted scan' };
+    im.key = normKey(data.fileKey) || im.key || parseFigmaKey(im.url) || null;
+    im.scan = data; im.modes = {}; im.sel = {}; im.open = {}; im.singles = {};
+    data.collections.forEach(function(c){ im.modes[c.id] = (c.modes[0]||{}).id; });
+    im.tree = imBuildTree(data);
+    im.status = 'ok';
+    imRender(); return;
+  }
+
   const vars = [];
   (function walkObj(node, path){
     if (!node || typeof node !== 'object') return;
@@ -4926,12 +5113,13 @@ function imRenderSource(){
     host.appendChild(go);
     if (!bridgeReadyForImport()){
       const w = el('div','status warn');
-      w.innerHTML = '<b>Figma is not connected in this session.</b> ' + (window.__FIGMA_STATUS__ || 'Reading a file needs the Figma MCP bridge.')
-        + '<ul><li>Authorise the Figma connector, then ask the agent to rebuild this view.</li><li>Or paste a token file instead.</li></ul>';
+      w.innerHTML = bridgeNotice();
       host.appendChild(w);
     }
   } else {
-    host.appendChild(el('p','hint','Accepts W3C design tokens with <code>$value</code>, or a plain map of names to hex. Works with no Figma connection at all.'));
+    host.appendChild(el('p','hint','Accepts W3C design tokens with <code>$value</code>, a plain map of names to hex, '
+      + 'or a scan the agent read out of a file — that last one keeps the variable ids, so those ramps can be '
+      + 'overwritten in place later. Works with no Figma connection at all.'));
     const ta = document.createElement('textarea');
     ta.className = 'inp ta';
     ta.placeholder = '{\n  "colours": {\n    "blue": { "500": "#3B82F6" }\n  }\n}';
@@ -4951,6 +5139,13 @@ function imRenderSource(){
     const b2 = el('div','status bad');
     b2.innerHTML = '<b>'+im.error+'</b>' + (im.hints.length ? '<ul>'+im.hints.map(function(h){return '<li>'+h+'</li>';}).join('')+'</ul>' : '');
     host.appendChild(b2);
+  }
+  if (im.status==='scanning' && im.progress){
+    const pr = im.progress;
+    const b = el('div','status info');
+    b.innerHTML = 'Reading <b>' + escHtml(pr.collection) + '</b> — ' + pr.done + ' of ' + pr.total
+      + ' variables, in pages so nothing gets cut off.';
+    host.appendChild(b);
   }
   if (im.status==='ok' && im.scan){
     const n = im.scan.collections.reduce(function(a2,c){ return a2 + c.variables.length; }, 0);
@@ -5593,7 +5788,7 @@ function pickImageThenExtract(){
 /* The help document lives as one string so the contents list can be
    built from it at open time — a heading that is not in the prose can
    never appear in the navigation. */
-const HELP_HTML = "<h2 id=\"h-what\" data-group=\"Start here\" data-nav=\"What this tool is\">What this tool is</h2>\n<p class=\"lead\">A workbench for eleven-step colour ramps \u2014 50, 100, 200 \u2026 900, 950 \u2014 built in OKLCH, checked against WCAG, and written straight into a Figma file as variables.</p>\n<p>Three things separate it from a gradient generator. Ramps are built in a <b>perceptually uniform space</b>, so a step of lightness looks like the same step whether the hue is yellow or blue. Every tone is <b>measurable</b> \u2014 contrast against white, against black, and against every other tone in the ramp. And a ramp read out of a Figma file can be <b>written back onto the very same variables</b>, which is what makes a reskin a job of minutes instead of days.</p>\n<p>Nothing is stored on a server. Your work lives in the browser tab for the session and in the snapshot files you save yourself.</p>\n<div class=\"note warm\"><p>Reading from and writing to Figma need a local bridge, so the Cowork session has to be running <b>On my computer</b> rather than in the cloud, with the Figma desktop app open and its MCP server enabled. Everything else \u2014 building ramps, pulling colours out of images, contrast, exports \u2014 works either way.</p></div>\n<h3 id=\"h-why-oklch\">Why OKLCH and not HSL</h3>\n<p>In HSL, <code>hsl(60 100% 50%)</code> is a blinding yellow and <code>hsl(240 100% 50%)</code> is a near-black blue, yet both claim 50% lightness. Anything built on that number produces ramps where one hue goes dark three steps before another. OKLab, published by Bj\u00f6rn Ottosson in 2020, fixes this: its L axis matches what the eye reports. CIELAB gets most of the way there but bends blues towards purple as they darken \u2014 OKLab does not. So the ramp maths \u2014 lightness ladder, chroma envelope, hue interpolation, gamut clipping \u2014 all happens in OKLCH, and hex only ever appears at the edges, on input and on export.</p>\n<h3 id=\"h-layout\">The layout</h3>\n<p>The left column is your desk: how to start, the list of ramps, and the buttons for export and for saving work. The right pane shows whatever ramp is selected \u2014 its tones, its editor, its curves, its contrast \u2014 or, on the <b>Export ramps</b> screen, all of them at once.</p>\n<p>Click a ramp in the list to select it. Click it again to deselect. The chevron beside its name opens the editor for that ramp inline.</p>\n<h2 id=\"h-start\" data-group=\"Making ramps\" data-nav=\"Four ways to start\">Four ways to start</h2>\n<p>The <b>Create</b> panel at the top of the left column offers four entry points. It collapses itself once you have ramps on the desk, and comes back when the desk is empty.</p>\n<dl>\n  <dt>New ramp</dt>\n  <dd>Build one from a colour you already know. This is the path described in the next section.</dd>\n  <dt>From an image</dt>\n  <dd>Pull key colours out of a photo, a screenshot or a brand board, then turn them into ramps in one go.</dd>\n  <dt>From Figma</dt>\n  <dd>Read ramps that already exist in a Figma file. These come back marked, and can later be written back onto the same variables.</dd>\n  <dt>Starter set</dt>\n  <dd>Five ramps \u2014 red, orange, green, blue and neutral \u2014 to poke at while you get a feel for the controls.</dd>\n</dl>\n<h2 id=\"h-new\" data-nav=\"Building a ramp by hand\">Building a ramp by hand</h2>\n<p>A ramp is defined by its <b>key colours</b>, not by all eleven tones. You pin the colours you care about; the tool works out the rest.</p>\n<ol class=\"steps\">\n  <li>Give the ramp a name. It becomes the variable name in Figma and the token name in every export, so name it the way your design system talks \u2014 <code>Blue</code>, not <code>blue-ish accent</code>.</li>\n  <li>Set the first key colour: pick the step it belongs to from the dropdown, then type a hex or click the swatch to open the picker. The picker opens in hex mode.</li>\n  <li>Press <b>Generate colour ramp</b>.</li>\n</ol>\n<p>One key colour is enough. The tool places it at the step you chose and builds the other ten around it, keeping its hue and scaling its chroma along a bell-shaped curve that peaks in the middle of the ramp \u2014 the same shape you find in most mature design systems, because mid-tones can carry more chroma than either end without leaving the sRGB gamut.</p>\n<h3 id=\"h-multi-keys\">More than one key colour</h3>\n<p><b>+ Add key colour</b> pins another. This is how you handle a brand that is not one hue stretched thin: a warm red at 500 and a cooler, deeper red at 900, for instance. Every pinned colour is reproduced exactly, and the tones between them are interpolated \u2014 lightness through a warped ladder, hue along the shortest arc, chroma normalised so that each key sits at its own measured chroma.</p>\n<div class=\"note\">\n  <p>Pinning two colours whose lightness runs the wrong way \u2014 a light colour at 900 and a dark one at 200 \u2014 gives you a ramp that reverses direction. The tool will build it, because sometimes that is what you meant, but it is almost always a mistake in the step numbers.</p>\n</div>\n<h3 id=\"h-shape\">Ramp shape</h3>\n<p>Under <b>show / hide</b> in the form sit five controls that reshape the whole ramp at once:</p>\n<dl>\n  <dt>Lightest tone (50) \u00b7 Darkest tone (950)</dt>\n  <dd>The two ends of the lightness ladder. Move them to make a ramp that never goes fully pale, or one that stops short of near-black.</dd>\n  <dt>Chroma amount</dt>\n  <dd>Scales the whole chroma envelope. Below 1 for muted, restrained palettes; above 1 to push saturation until the gamut stops you.</dd>\n  <dt>Hue shift \u00b7 light end \u00b7 Hue shift \u00b7 dark end</dt>\n  <dd>Rotates hue towards the ends of the ramp. A few degrees of warmth in the highlights and coolness in the shadows is what makes a ramp feel like it was mixed with paint rather than calculated.</dd>\n</dl>\n<p>Every tone is gamut-mapped after all of this: chroma is reduced by binary search at fixed lightness and hue until the colour fits in sRGB. That is why pushing chroma past a point stops changing anything \u2014 you have hit the edge of what the screen can show.</p>\n<h2 id=\"h-image\" data-nav=\"Pulling colours from an image\">Pulling colours from an image</h2>\n<p><b>From an image</b> opens a full-screen workspace. Drop in a photo, a screenshot of a site, a brand board \u2014 anything with the colours you want.</p>\n<p>The centre of the screen is a <b>hue \u00d7 chroma plot of every pixel</b> in the image. Each dot is a pixel placed by hue around the circle and chroma out from the middle; the crosses are the key colours the tool has picked. This is not decoration \u2014 it is the tool you steer with.</p>\n<ul>\n  <li><b>Drag a marker</b> anywhere on the plot to move that key colour. With <i>Snap a dropped marker to its cluster</i> on, releasing it takes the mean of the pixels around the drop point rather than the raw position, so you land on a colour that is actually in the image.</li>\n  <li><b>Key colours to return</b> sets how many you want, from three to eight.</li>\n  <li><b>Also return the dominant neutral</b> adds a grey. The chroma cut-off throws greys away by design, but a design system almost always wants a neutral ramp too.</li>\n  <li><b>More settings</b> holds the clustering itself: how many clusters to fit before choosing, the minimum chroma and lightness worth keeping, how much to favour colourfulness over sheer area, and how far apart two hues must be to count as different colours. <b>Defaults</b> lives there too.</li>\n</ul>\n<p>Each candidate appears as a card with its share of the image, its step, and a chevron for the rest of the detail. Uncheck the ones you do not want; the counter beside the panel title tracks what is left. <b>Generate N ramps</b> turns every checked colour into a full ramp on the desk.</p>\n<div class=\"note\">\n  <p><b>Tuned</b> versus <b>Raw dominant</b>: raw shows the cluster centres exactly as the maths found them; tuned nudges them for hue separation and drops near-duplicates. Raw is the honest answer, tuned is usually the useful one.</p>\n</div>\n<p>The clustering is k-means++ in OKLab with a fixed seed, so the same image with the same settings always gives the same colours. Share of the image is measured against every pixel, not just the surviving ones \u2014 a 2% accent reads as 2%.</p>\n<h2 id=\"h-import\" data-nav=\"Reading ramps out of Figma\">Reading ramps out of Figma</h2>\n<p><b>From Figma</b> asks for a file link and then scans <b>every</b> variable collection in it. Nothing about your naming is assumed \u2014 the tool does not go looking for a collection called Primitives, it reads what is there.</p>\n<p>What comes back is a tree: collection, then groups, then tones, with a checkbox on every branch and every leaf. Tick a whole group to bring in a ramp. Tick a single colour to seed a new ramp from it \u2014 you will be asked for a name, since one variable is not a ramp yet.</p>\n<p>Imported ramps arrive with the file's own colours as the truth: the tool works out which tone is the key colour, generates a ramp from it, and keeps every tone the generator would not have produced as a hand edit. Import then re-export a ramp this tool made, and you get zero overrides.</p>\n<h3 id=\"h-import-mark\">The Figma mark</h3>\n<p>An imported ramp carries a small Figma glyph beside its name, in the list and in the title. That mark is not cosmetic: it means the tool still holds the <b>id of every variable</b> the ramp came from, along with the file, the collection, the group and the mode. Those ids are what make writing back possible.</p>\n<p>The name matches Figma exactly, on purpose. If you rename the ramp, the old name stays visible under the new one \u2014 <code>was Colours/blue</code> \u2014 and a green dot appears beside it in the list, where there is no room for the full path.</p>\n<p>A ramp that came in as a single key colour has no set of eleven ids behind it, so it behaves like a ramp you built by hand. It keeps the Figma mark for provenance, but cannot be overwritten in place.</p>\n<h2 id=\"h-edit\" data-group=\"Refining\" data-nav=\"Editing one tone\">Editing one tone</h2>\n<p>Click any tone in the ramp to open <b>Edit tone</b>. The panel splits in two: the original on the left, your edit on the right. Clicking the original resets the edit; <b>Save ramp</b> commits it, <b>Discard edits</b> throws it away.</p>\n<p>You have three ways to change the colour, and they are the same colour seen three ways:</p>\n<ul>\n  <li>the <b>picker</b>, for when you have a hex from somewhere else;</li>\n  <li><b>L, C and H sliders</b>, for moving one property while the other two hold still;</li>\n  <li><b>Make this a key colour</b>, which pins the tone and rebuilds the rest of the ramp around it.</li>\n</ul>\n<p>That last one is the important distinction. A plain edit is an <b>override</b>: that one tone is forced to a value and the rest of the ramp ignores it. Pinning it as a key colour makes it part of the ramp's definition, and everything around it moves. Use an override to fix a single stubborn tone; pin a key colour when the whole ramp is heading the wrong way.</p>\n<h2 id=\"h-curves\" data-nav=\"Working with the curves\">Working with the curves</h2>\n<p><b>Perceptual curves \u00b7 OKLCH</b> shows the ramp as three graphs \u2014 lightness, chroma, hue \u2014 with one point per tone. This is the fastest way to see what is wrong with a ramp, because the eye catches a kink in a line long before it catches an odd colour in a row of swatches.</p>\n<h3 id=\"h-curves-read\">Reading them</h3>\n<dl>\n  <dt>Lightness</dt>\n  <dd>Should fall smoothly from 50 to 950. A flat stretch means two tones that will read as the same colour in a UI. A cliff means a jump users will notice \u2014 often right where a border meets a fill.</dd>\n  <dt>Chroma</dt>\n  <dd>Normally a hump: low at the pale end, peaking somewhere around 500\u2013600, falling again into the darks. A chroma line that is clipped flat at the top is telling you the gamut ran out \u2014 those tones are as saturated as sRGB allows, and pushing further changes nothing.</dd>\n  <dt>Hue</dt>\n  <dd>Usually near-flat, bending a few degrees at the ends if you set a hue shift. A sudden swing in the middle almost always means two key colours with genuinely different hues, and the ramp is travelling between them.</dd>\n</dl>\n<h3 id=\"h-curves-drag\">Dragging a point</h3>\n<p>Drag any point up or down. The colour updates as you move \u2014 the swatches above change under your hand, not after you let go. Pinned key colours are drawn differently and hold their value; they are the anchors the rest bends around.</p>\n<p>Two buttons appear next to the section title as soon as you touch a curve: <b>Save ramp</b> and <b>Discard edits</b>. Nothing is committed until you press one. Dragging a curve does not open the tone editor \u2014 the two ways of working stay out of each other's way.</p>\n<div class=\"note\">\n  <p>A practical order that works: get the lightness line smooth first, because it decides legibility. Then shape chroma for the feel you want. Touch hue last, and sparingly \u2014 a couple of degrees is a lot.</p>\n</div>\n<h2 id=\"h-contrast\" data-nav=\"Contrast and accessibility\">Contrast and accessibility</h2>\n<p>Every tone reports its contrast against white and against black, as a WCAG 2.1 ratio. The thresholds worth remembering: <b>4.5:1</b> is AA for body text, <b>3:1</b> is AA for large text and for interface graphics like icons and input borders, and <b>7:1</b> is AAA.</p>\n<p>The <b>Tone-against-tone matrix</b> checks every tone against every other tone in the same ramp. This answers the question that actually comes up in practice \u2014 <i>can I put my 700 text on my 100 background?</i> \u2014 which the white-and-black columns cannot.</p>\n<p>On the <b>Export ramps</b> screen the <b>Overlay</b> dropdown writes a number into every cell of the grid: hex, WCAG on white, WCAG on black, or the raw L, C and H. Switching it to <i>WCAG on white</i> across all your ramps is the quickest audit there is \u2014 you see at a glance which step is the first safe one for text in every hue.</p>\n<h2 id=\"h-preview\" data-nav=\"Interface preview\">Interface preview</h2>\n<p>The <b>Interface preview</b> tab builds a small interface \u2014 buttons, cards, form fields, states \u2014 entirely out of the selected ramp. Numbers tell you a ramp is legal; this tells you whether it is pleasant. A ramp can pass every contrast check and still feel muddy in use, and this is where that shows up.</p>\n<h2 id=\"h-save\" data-group=\"Keeping work\" data-nav=\"Saving and loading\">Saving and loading</h2>\n<p><b>Save work</b> asks for a name and downloads a snapshot: every ramp, its key colours, its shape settings, its hand edits, and the Figma provenance for anything imported. <b>Load</b> brings one back.</p>\n<p>The file is plain readable JSON, so you can diff it, keep it in a repository, or read it when something goes wrong. It carries a <b>checksum</b> over its contents, so a file that got truncated on a copy or edited by hand is spotted when you open it. Reformatting is fine \u2014 the checksum is taken over the data, not the whitespace \u2014 but a changed value is reported, and you decide whether to load anyway.</p>\n<p>Loading replaces everything on the desk, and says so first. Ramps that cannot be read are skipped individually rather than failing the whole file.</p>\n<div class=\"note warm\">\n  <p>The desk itself survives a reload of the page for the session, but not a closed tab. If the work matters, save it.</p>\n</div>\n<h2 id=\"h-export\" data-group=\"Getting colours out\" data-nav=\"Export formats\">Export formats</h2>\n<p><b>Export ramps</b> shows every ramp as a grid and offers four formats:</p>\n<dl>\n  <dt>Figma REST API</dt>\n  <dd>The real request body for <code>POST /v1/files/:key/variables</code>. Four arrays tied together by temporary ids so the whole set lands in one atomic call. Enterprise organisations only \u2014 that endpoint is not available on other plans.</dd>\n  <dt>Design tokens</dt>\n  <dd>W3C DTCG format. What Tokens Studio and Style Dictionary consume, and the most portable thing here.</dd>\n  <dt>JSON</dt>\n  <dd>Plain nested objects. For your own scripts.</dd>\n  <dt>CSS hex</dt>\n  <dd>Custom properties, one per tone.</dd>\n</dl>\n<p>All four follow the collection and group you chose in the write panel, so what you copy matches what would be written.</p>\n<h2 id=\"h-write\" data-nav=\"Writing into a Figma file\">Writing into a Figma file</h2>\n<p>The panel at the bottom of the export screen writes variables straight into a file, in three steps.</p>\n<h3 id=\"h-write-connect\">1 \u00b7 Connect and check</h3>\n<p>Paste a file link and press <b>Connect</b>. The tool opens the file, proves it can actually create a variable \u2014 by making one and removing it immediately, which is the only honest test \u2014 and reads every collection with its modes.</p>\n<h3 id=\"h-write-where\">Where to write</h3>\n<p>Then you choose the address:</p>\n<ul>\n  <li><b>Collection</b> \u2014 any collection in the file, or <i>New collection\u2026</i> with a name of your own.</li>\n  <li><b>Group</b> \u2014 optional. Leave it empty and ramps sit at the root of the collection as <code>Blue/500</code>. Nesting works: <code>Core/Colours</code>.</li>\n  <li><b>Mode</b> \u2014 only appears when the collection has more than one, so you cannot flood a dark theme with light values by accident.</li>\n</ul>\n<p>A line underneath shows exactly what a variable will be called and how many ramps already sit at that address. If ramps on the desk came from this file, the address is pre-filled from where they came from.</p>\n<h3 id=\"h-write-list\">2 \u00b7 What will be written</h3>\n<p>One row per ramp, each with a tag saying what will happen: <b>New</b>, <b>Update</b>, <b>Renamed</b>, <b>Updated in place</b>. Unticked rows go pale, drop all their controls and carry a single <b>Will be skipped</b> tag.</p>\n<p>A warm <b>9 in file</b> marker appears when the group in Figma does not hold exactly eleven variables. Hover it to see how many will be created and how many sit outside the 50\u2026950 scale.</p>\n<h3 id=\"h-write-conflicts\">Name conflicts</h3>\n<p>If a ramp's name is already in use at that address, a dialog opens with four choices per ramp: update the existing values, rename yours, rename the one in Figma, or skip it. The explanation under the dropdown changes with the choice, and a name field appears for the two renames.</p>\n<h3 id=\"h-write-go\">3 \u00b7 Write</h3>\n<p>Ramps are written one call per ramp, so a failure can be pinned to a single ramp rather than leaving you guessing. Afterwards everything is <b>read back out of the file and compared</b> \u2014 names, values, ids \u2014 and the result says how many matched. Anything that went differently but did not fail is reported too.</p>\n<h2 id=\"h-overwrite\" data-group=\"The reskin\" data-nav=\"Overwriting in place\">Overwriting in place</h2>\n<p class=\"lead\">This is the feature the rest of the tool exists to serve. Read it once even if you skip everything else.</p>\n<h3 id=\"h-overwrite-why\">The problem it solves</h3>\n<p>You are rebranding. A Figma file holds a colour system, and hundreds of layers point at those variables \u2014 fills, strokes, effects. Other variables alias them. Other files consume them through the published library. The new palette is ready.</p>\n<p>Write it as a new set of variables and you have created a second colour system next to the first. Nothing in the file repaints. Every layer still points at the old variables, and someone has to walk through the file relinking them by hand. That is days of work, and it is the kind of work that gets nine tenths done and then quietly abandoned.</p>\n<h3 id=\"h-overwrite-how\">What it does instead</h3>\n<p>Tick <b>Overwrite ramp in Figma</b> on a row and that ramp is written onto the very variables it was read from, addressed by <b>id</b> rather than by name.</p>\n<p>A variable id in Figma survives both a rename and a value change. So when the colour underneath changes, everything that already points at that id keeps pointing at it:</p>\n<ul>\n  <li>fills, strokes and effects on layers \u2014 they repaint on their own, immediately;</li>\n  <li>aliases from other variables \u2014 semantic tokens like <code>surface/raised</code> pointing at <code>Colours/grey/100</code> keep resolving;</li>\n  <li>the published key other files use \u2014 library consumers pick the change up on update, with no relinking.</li>\n</ul>\n<p>Nothing needs to be relinked because nothing was ever unlinked. That is the whole trick, and it is why the tool goes to the trouble of remembering ids at import.</p>\n<h3 id=\"h-overwrite-rename\">Renaming while overwriting</h3>\n<p>You can rename the ramp too. A rename keeps the same ids, so the links hold exactly as before \u2014 <code>Colours/blue/500</code> becomes <code>Colours/lavander/500</code>, and every layer using it carries on without noticing.</p>\n<div class=\"note warm\">\n  <p>A group in Figma is only a prefix in a variable's name, not a container. So anything in that group which is <b>not</b> part of the ramp \u2014 a stray <code>colours/blue/base</code>, say \u2014 does not travel with the rename. It stays behind under the old prefix with its old colour. The tool never deletes it and always tells you it happened.</p>\n</div>\n<h3 id=\"h-overwrite-uneven\">When the group is not eleven variables</h3>\n<p>Real files are untidy. A group might hold nine variables, or twelve, or use a 1\u201312 scale from another system.</p>\n<ul>\n  <li><b>Fewer than eleven</b> \u2014 the ones that were imported are overwritten, and the missing tones are created alongside them. You end up with a complete ramp and the existing links intact.</li>\n  <li><b>More than eleven</b> \u2014 the eleven the ramp holds are overwritten; the extras are left exactly as they are, still carrying the old colours. They are listed by name in the result.</li>\n</ul>\n<p>Either way you get a full 50\u2026950 ramp without breaking a single link, and the leftovers can be tidied on the semantic layer afterwards. That is a far smaller job than relinking a file.</p>\n<h3 id=\"h-overwrite-when\">When it is offered \u2014 and when it is not</h3>\n<p>The switch is only available when overwriting can actually work. Otherwise it is greyed out and explains itself:</p>\n<ul>\n  <li><b>Different file</b> \u2014 the ramp was read from another file, and ids are meaningless outside the file that issued them.</li>\n  <li><b>Grew from a single colour</b> \u2014 there is no set of eleven variables to write onto.</li>\n  <li><b>No file connected</b> \u2014 connect one first.</li>\n</ul>\n<p>It is off by default. Overwriting variables in a shared file is not something to do by accident.</p>\n<h3 id=\"h-overwrite-undo\">Getting back</h3>\n<p>There is no undo inside this tool. Once values are written, the old colours are gone from the file. <b>Figma's own undo</b> is the way back, in the Figma window, straight after the write.</p>\n<p>Before a real reskin: duplicate the file, or work on a branch. Then a bad result costs a click rather than an afternoon.</p>\n<h2 id=\"h-warnings\" data-nav=\"The warnings before a write\">The warnings before a write</h2>\n<p>Pressing the write button opens <b>Before writing</b> whenever there is something worth knowing. Each ramp with something to say gets a card, and each consequence gets a plain sentence and a label:</p>\n<dl>\n  <dt>Overwrites in place</dt>\n  <dd>Ids stay, links hold, but the old colours are gone.</dd>\n  <dt>Renames variables</dt>\n  <dd>From the old Figma name to the new one.</dd>\n  <dt>Completes the scale</dt>\n  <dd>Fewer tones were imported than the ramp has; the rest will be created.</dd>\n  <dt>Leaves extras behind</dt>\n  <dd>Variables outside the 50\u2026950 scale, untouched and still old.</dd>\n  <dt>Writes a duplicate</dt>\n  <dd>The ramp came from this file but Overwrite is off, so nothing in the file will repaint. Usually a sign you meant to tick the box.</dd>\n  <dt>Uneven set in the file \u00b7 Renames the existing ramp</dt>\n  <dd>For ramps written by name rather than by id.</dd>\n</dl>\n<p>Every card has a checkbox. Drop a doubtful ramp from the write right there \u2014 the totals and the button update as you go, and the list behind the dialog follows. If there is nothing to warn about, the write simply runs.</p>\n<h2 id=\"h-recipes\" data-group=\"Reference\" data-nav=\"Two common jobs\">Two common jobs</h2>\n<h3 id=\"h-recipe-reskin\">Reskinning an existing file</h3>\n<ol class=\"steps\">\n  <li>Duplicate the Figma file, or open a branch.</li>\n  <li><b>From Figma</b> \u2192 paste the link \u2192 tick the groups that make up the current system \u2192 import.</li>\n  <li>Reshape each ramp: new key colours, or the curves, or both.</li>\n  <li><b>Export ramps</b> \u2192 connect the same file. The address is pre-filled from where the ramps came from.</li>\n  <li>Tick <b>Overwrite ramp in Figma</b> on every ramp you want to land on its originals.</li>\n  <li>Read the warnings, then write. Check the file \u2014 layers should already be repainted.</li>\n</ol>\n<h3 id=\"h-recipe-brand\">A new system from a brand image</h3>\n<ol class=\"steps\">\n  <li><b>From an image</b> \u2192 drop the brand board in.</li>\n  <li>Set how many key colours you want; drag markers on the plot until the crosses sit on the colours you recognise.</li>\n  <li>Leave <i>Also return the dominant neutral</i> on \u2014 you will want a grey ramp.</li>\n  <li><b>Generate N ramps</b>, then check the contrast matrix on each and fix what fails.</li>\n  <li><b>Save work</b>, then export or write to Figma.</li>\n</ol>\n<h2 id=\"h-trouble\" data-nav=\"When something is wrong\">When something is wrong</h2>\n<dl>\n  <dt>Chroma will not go any higher</dt>\n  <dd>You are at the sRGB gamut edge. The curve is flat there because the colour does not exist on screen.</dd>\n  <dt>A new group appeared in Figma instead of the old one changing</dt>\n  <dd>Overwrite was off for that ramp, or the connected file is not the file it was imported from.</dd>\n  <dt>The write panel says it cannot reach Figma</dt>\n  <dd>Check three things, in order. The Cowork session must be running <b>On my computer</b> \u2014 it asks where to run a task before it starts, and a cloud session has no route to a server on your own machine. The Figma <b>desktop</b> app must be open with its MCP server enabled. The Figma connector must be authorised in Claude. Copy or Download still give you the full payload meanwhile.</dd>\n  <dt>An imported ramp has hand edits everywhere</dt>\n  <dd>Expected. The file's colours are kept exactly, and anything the generator would not have produced is preserved as an override. Pin a different key colour to bring it back under the generator's control.</dd>\n  <dt>The snapshot says it changed since it was saved</dt>\n  <dd>The checksum does not match the contents. Loading is still allowed \u2014 what you get is whatever the file actually says.</dd>\n</dl>\n<h2 id=\"h-credits\" data-nav=\"Where the maths comes from\">Where the maths comes from</h2>\n<ul>\n  <li>Bj\u00f6rn Ottosson, <i>A perceptual color space for image processing</i> \u2014 the OKLab transforms used throughout.</li>\n  <li>Stripe, <i>Designing accessible color systems</i> \u2014 the case for building ramps on a perceptual lightness axis.</li>\n  <li>WCAG 2.1 \u2014 the contrast ratio definition behind every number the tool reports.</li>\n  <li>W3C Design Tokens Community Group format \u2014 the shape of the token export.</li>\n</ul>";
+const HELP_HTML = "<h2 id=\"h-what\" data-group=\"Start here\" data-nav=\"What this tool is\">What this tool is</h2>\n<p class=\"lead\">A workbench for eleven-step colour ramps \u2014 50, 100, 200 \u2026 900, 950 \u2014 built in OKLCH, checked against WCAG, and written straight into a Figma file as variables.</p>\n<p>Three things separate it from a gradient generator. Ramps are built in a <b>perceptually uniform space</b>, so a step of lightness looks like the same step whether the hue is yellow or blue. Every tone is <b>measurable</b> \u2014 contrast against white, against black, and against every other tone in the ramp. And a ramp read out of a Figma file can be <b>written back onto the very same variables</b>, which is what makes a reskin a job of minutes instead of days.</p>\n<p>Nothing is stored on a server. Your work lives in the browser tab for the session and in the snapshot files you save yourself.</p>\n<div class=\"note warm\"><p>Reading from and writing to Figma need a local bridge, so the Cowork session has to be running <b>On my computer</b> rather than in the cloud, with the Figma desktop app open and its MCP server enabled. Everything else \u2014 building ramps, pulling colours out of images, contrast, exports \u2014 works either way.</p></div>\n<h3 id=\"h-why-oklch\">Why OKLCH and not HSL</h3>\n<p>In HSL, <code>hsl(60 100% 50%)</code> is a blinding yellow and <code>hsl(240 100% 50%)</code> is a near-black blue, yet both claim 50% lightness. Anything built on that number produces ramps where one hue goes dark three steps before another. OKLab, published by Bj\u00f6rn Ottosson in 2020, fixes this: its L axis matches what the eye reports. CIELAB gets most of the way there but bends blues towards purple as they darken \u2014 OKLab does not. So the ramp maths \u2014 lightness ladder, chroma envelope, hue interpolation, gamut clipping \u2014 all happens in OKLCH, and hex only ever appears at the edges, on input and on export.</p>\n<h3 id=\"h-layout\">The layout</h3>\n<p>The left column is your desk: how to start, the list of ramps, and the buttons for export and for saving work. The right pane shows whatever ramp is selected \u2014 its tones, its editor, its curves, its contrast \u2014 or, on the <b>Export ramps</b> screen, all of them at once.</p>\n<p>Click a ramp in the list to select it. Click it again to deselect. The chevron beside its name opens the editor for that ramp inline.</p>\n<h2 id=\"h-start\" data-group=\"Making ramps\" data-nav=\"Four ways to start\">Four ways to start</h2>\n<p>The <b>Create</b> panel at the top of the left column offers four entry points. It collapses itself once you have ramps on the desk, and comes back when the desk is empty.</p>\n<dl>\n  <dt>New ramp</dt>\n  <dd>Build one from a colour you already know. This is the path described in the next section.</dd>\n  <dt>From an image</dt>\n  <dd>Pull key colours out of a photo, a screenshot or a brand board, then turn them into ramps in one go.</dd>\n  <dt>From Figma</dt>\n  <dd>Read ramps that already exist in a Figma file. These come back marked, and can later be written back onto the same variables.</dd>\n  <dt>Starter set</dt>\n  <dd>Five ramps \u2014 red, orange, green, blue and neutral \u2014 to poke at while you get a feel for the controls.</dd>\n</dl>\n<h2 id=\"h-new\" data-nav=\"Building a ramp by hand\">Building a ramp by hand</h2>\n<p>A ramp is defined by its <b>key colours</b>, not by all eleven tones. You pin the colours you care about; the tool works out the rest.</p>\n<ol class=\"steps\">\n  <li>Give the ramp a name. It becomes the variable name in Figma and the token name in every export, so name it the way your design system talks \u2014 <code>Blue</code>, not <code>blue-ish accent</code>.</li>\n  <li>Set the first key colour: pick the step it belongs to from the dropdown, then type a hex or click the swatch to open the picker. The picker opens in hex mode.</li>\n  <li>Press <b>Generate colour ramp</b>.</li>\n</ol>\n<p>One key colour is enough. The tool places it at the step you chose and builds the other ten around it, keeping its hue and scaling its chroma along a bell-shaped curve that peaks in the middle of the ramp \u2014 the same shape you find in most mature design systems, because mid-tones can carry more chroma than either end without leaving the sRGB gamut.</p>\n<h3 id=\"h-multi-keys\">More than one key colour</h3>\n<p><b>+ Add key colour</b> pins another. This is how you handle a brand that is not one hue stretched thin: a warm red at 500 and a cooler, deeper red at 900, for instance. Every pinned colour is reproduced exactly, and the tones between them are interpolated \u2014 lightness through a warped ladder, hue along the shortest arc, chroma normalised so that each key sits at its own measured chroma.</p>\n<div class=\"note\">\n  <p>Pinning two colours whose lightness runs the wrong way \u2014 a light colour at 900 and a dark one at 200 \u2014 gives you a ramp that reverses direction. The tool will build it, because sometimes that is what you meant, but it is almost always a mistake in the step numbers.</p>\n</div>\n<h3 id=\"h-shape\">Ramp shape</h3>\n<p>Under <b>show / hide</b> in the form sit five controls that reshape the whole ramp at once:</p>\n<dl>\n  <dt>Lightest tone (50) \u00b7 Darkest tone (950)</dt>\n  <dd>The two ends of the lightness ladder. Move them to make a ramp that never goes fully pale, or one that stops short of near-black.</dd>\n  <dt>Chroma amount</dt>\n  <dd>Scales the whole chroma envelope. Below 1 for muted, restrained palettes; above 1 to push saturation until the gamut stops you.</dd>\n  <dt>Hue shift \u00b7 light end \u00b7 Hue shift \u00b7 dark end</dt>\n  <dd>Rotates hue towards the ends of the ramp. A few degrees of warmth in the highlights and coolness in the shadows is what makes a ramp feel like it was mixed with paint rather than calculated.</dd>\n</dl>\n<p>Every tone is gamut-mapped after all of this: chroma is reduced by binary search at fixed lightness and hue until the colour fits in sRGB. That is why pushing chroma past a point stops changing anything \u2014 you have hit the edge of what the screen can show.</p>\n<h2 id=\"h-image\" data-nav=\"Pulling colours from an image\">Pulling colours from an image</h2>\n<p><b>From an image</b> opens a full-screen workspace. Drop in a photo, a screenshot of a site, a brand board \u2014 anything with the colours you want.</p>\n<p>The centre of the screen is a <b>hue \u00d7 chroma plot of every pixel</b> in the image. Each dot is a pixel placed by hue around the circle and chroma out from the middle; the crosses are the key colours the tool has picked. This is not decoration \u2014 it is the tool you steer with.</p>\n<ul>\n  <li><b>Drag a marker</b> anywhere on the plot to move that key colour. With <i>Snap a dropped marker to its cluster</i> on, releasing it takes the mean of the pixels around the drop point rather than the raw position, so you land on a colour that is actually in the image.</li>\n  <li><b>Key colours to return</b> sets how many you want, from three to eight.</li>\n  <li><b>Also return the dominant neutral</b> adds a grey. The chroma cut-off throws greys away by design, but a design system almost always wants a neutral ramp too.</li>\n  <li><b>More settings</b> holds the clustering itself: how many clusters to fit before choosing, the minimum chroma and lightness worth keeping, how much to favour colourfulness over sheer area, and how far apart two hues must be to count as different colours. <b>Defaults</b> lives there too.</li>\n</ul>\n<p>Each candidate appears as a card with its share of the image, its step, and a chevron for the rest of the detail. Uncheck the ones you do not want; the counter beside the panel title tracks what is left. <b>Generate N ramps</b> turns every checked colour into a full ramp on the desk.</p>\n<div class=\"note\">\n  <p><b>Tuned</b> versus <b>Raw dominant</b>: raw shows the cluster centres exactly as the maths found them; tuned nudges them for hue separation and drops near-duplicates. Raw is the honest answer, tuned is usually the useful one.</p>\n</div>\n<p>The clustering is k-means++ in OKLab with a fixed seed, so the same image with the same settings always gives the same colours. Share of the image is measured against every pixel, not just the surviving ones \u2014 a 2% accent reads as 2%.</p>\n<h2 id=\"h-import\" data-nav=\"Reading ramps out of Figma\">Reading ramps out of Figma</h2>\n<p><b>From Figma</b> asks for a file link and then scans <b>every</b> variable collection in it. Nothing about your naming is assumed \u2014 the tool does not go looking for a collection called Primitives, it reads what is there.</p>\n<p>Big files are read in pages \u2014 a first call for the shape of the file, then slices of variables \u2014 because the bridge cuts a single reply off at about 20&nbsp;KB. A progress line shows where it has got to. Nothing is written at any point.</p>\n<p>What comes back is a tree: collection, then groups, then tones, with a checkbox on every branch and every leaf. Tick a whole group to bring in a ramp. Tick a single colour to seed a new ramp from it \u2014 you will be asked for a name, since one variable is not a ramp yet.</p>\n<p>Imported ramps arrive with the file's own colours as the truth: the tool works out which tone is the key colour, generates a ramp from it, and keeps every tone the generator would not have produced as a hand edit. Import then re-export a ramp this tool made, and you get zero overrides.</p>\n<h3 id=\"h-import-mark\">The Figma mark</h3>\n<p>An imported ramp carries a small Figma glyph beside its name, in the list and in the title. That mark is not cosmetic: it means the tool still holds the <b>id of every variable</b> the ramp came from, along with the file, the collection, the group and the mode. Those ids are what make writing back possible.</p>\n<p>The name matches Figma exactly, on purpose. If you rename the ramp, the old name stays visible under the new one \u2014 <code>was Colours/blue</code> \u2014 and a green dot appears beside it in the list, where there is no room for the full path.</p>\n<p>A ramp that came in as a single key colour has no set of eleven ids behind it, so it behaves like a ramp you built by hand. It keeps the Figma mark for provenance, but cannot be overwritten in place.</p>\n<h2 id=\"h-edit\" data-group=\"Refining\" data-nav=\"Editing one tone\">Editing one tone</h2>\n<p>Click any tone in the ramp to open <b>Edit tone</b>. The panel splits in two: the original on the left, your edit on the right. Clicking the original resets the edit; <b>Save ramp</b> commits it, <b>Discard edits</b> throws it away.</p>\n<p>You have three ways to change the colour, and they are the same colour seen three ways:</p>\n<ul>\n  <li>the <b>picker</b>, for when you have a hex from somewhere else;</li>\n  <li><b>L, C and H sliders</b>, for moving one property while the other two hold still;</li>\n  <li><b>Make this a key colour</b>, which pins the tone and rebuilds the rest of the ramp around it.</li>\n</ul>\n<p>That last one is the important distinction. A plain edit is an <b>override</b>: that one tone is forced to a value and the rest of the ramp ignores it. Pinning it as a key colour makes it part of the ramp's definition, and everything around it moves. Use an override to fix a single stubborn tone; pin a key colour when the whole ramp is heading the wrong way.</p>\n<h2 id=\"h-curves\" data-nav=\"Working with the curves\">Working with the curves</h2>\n<p><b>Perceptual curves \u00b7 OKLCH</b> shows the ramp as three graphs \u2014 lightness, chroma, hue \u2014 with one point per tone. This is the fastest way to see what is wrong with a ramp, because the eye catches a kink in a line long before it catches an odd colour in a row of swatches.</p>\n<h3 id=\"h-curves-read\">Reading them</h3>\n<dl>\n  <dt>Lightness</dt>\n  <dd>Should fall smoothly from 50 to 950. A flat stretch means two tones that will read as the same colour in a UI. A cliff means a jump users will notice \u2014 often right where a border meets a fill.</dd>\n  <dt>Chroma</dt>\n  <dd>Normally a hump: low at the pale end, peaking somewhere around 500\u2013600, falling again into the darks. A chroma line that is clipped flat at the top is telling you the gamut ran out \u2014 those tones are as saturated as sRGB allows, and pushing further changes nothing.</dd>\n  <dt>Hue</dt>\n  <dd>Usually near-flat, bending a few degrees at the ends if you set a hue shift. A sudden swing in the middle almost always means two key colours with genuinely different hues, and the ramp is travelling between them.</dd>\n</dl>\n<h3 id=\"h-curves-drag\">Dragging a point</h3>\n<p>Drag any point up or down. The colour updates as you move \u2014 the swatches above change under your hand, not after you let go. Pinned key colours are drawn differently and hold their value; they are the anchors the rest bends around.</p>\n<p>Two buttons appear next to the section title as soon as you touch a curve: <b>Save ramp</b> and <b>Discard edits</b>. Nothing is committed until you press one. Dragging a curve does not open the tone editor \u2014 the two ways of working stay out of each other's way.</p>\n<div class=\"note\">\n  <p>A practical order that works: get the lightness line smooth first, because it decides legibility. Then shape chroma for the feel you want. Touch hue last, and sparingly \u2014 a couple of degrees is a lot.</p>\n</div>\n<h2 id=\"h-contrast\" data-nav=\"Contrast and accessibility\">Contrast and accessibility</h2>\n<p>Every tone reports its contrast against white and against black, as a WCAG 2.1 ratio. The thresholds worth remembering: <b>4.5:1</b> is AA for body text, <b>3:1</b> is AA for large text and for interface graphics like icons and input borders, and <b>7:1</b> is AAA.</p>\n<p>The <b>Tone-against-tone matrix</b> checks every tone against every other tone in the same ramp. This answers the question that actually comes up in practice \u2014 <i>can I put my 700 text on my 100 background?</i> \u2014 which the white-and-black columns cannot.</p>\n<p>On the <b>Export ramps</b> screen the <b>Overlay</b> dropdown writes a number into every cell of the grid: hex, WCAG on white, WCAG on black, or the raw L, C and H. Switching it to <i>WCAG on white</i> across all your ramps is the quickest audit there is \u2014 you see at a glance which step is the first safe one for text in every hue.</p>\n<h2 id=\"h-preview\" data-nav=\"Interface preview\">Interface preview</h2>\n<p>The <b>Interface preview</b> tab builds a small interface \u2014 buttons, cards, form fields, states \u2014 entirely out of the selected ramp. Numbers tell you a ramp is legal; this tells you whether it is pleasant. A ramp can pass every contrast check and still feel muddy in use, and this is where that shows up.</p>\n<h2 id=\"h-save\" data-group=\"Keeping work\" data-nav=\"Saving and loading\">Saving and loading</h2>\n<p><b>Save work</b> asks for a name and downloads a snapshot: every ramp, its key colours, its shape settings, its hand edits, and the Figma provenance for anything imported. <b>Load</b> brings one back.</p>\n<p>The file is plain readable JSON, so you can diff it, keep it in a repository, or read it when something goes wrong. It carries a <b>checksum</b> over its contents, so a file that got truncated on a copy or edited by hand is spotted when you open it. Reformatting is fine \u2014 the checksum is taken over the data, not the whitespace \u2014 but a changed value is reported, and you decide whether to load anyway.</p>\n<p>Loading replaces everything on the desk, and says so first. Ramps that cannot be read are skipped individually rather than failing the whole file.</p>\n<div class=\"note warm\">\n  <p>The desk itself survives a reload of the page for the session, but not a closed tab. If the work matters, save it.</p>\n</div>\n<h2 id=\"h-export\" data-group=\"Getting colours out\" data-nav=\"Export formats\">Export formats</h2>\n<p><b>Export ramps</b> shows every ramp as a grid and offers four formats:</p>\n<dl>\n  <dt>Figma REST API</dt>\n  <dd>The real request body for <code>POST /v1/files/:key/variables</code>. Four arrays tied together by temporary ids so the whole set lands in one atomic call. Enterprise organisations only \u2014 that endpoint is not available on other plans.</dd>\n  <dt>Design tokens</dt>\n  <dd>W3C DTCG format. What Tokens Studio and Style Dictionary consume, and the most portable thing here.</dd>\n  <dt>JSON</dt>\n  <dd>Plain nested objects. For your own scripts.</dd>\n  <dt>CSS hex</dt>\n  <dd>Custom properties, one per tone.</dd>\n</dl>\n<p>All four follow the collection and group you chose in the write panel, so what you copy matches what would be written.</p>\n<h2 id=\"h-write\" data-nav=\"Writing into a Figma file\">Writing into a Figma file</h2>\n<p>The panel at the bottom of the export screen writes variables straight into a file, in three steps.</p>\n<h3 id=\"h-write-connect\">1 \u00b7 Connect and check</h3>\n<p>Paste a file link and press <b>Connect</b>. The tool opens the file, proves it can actually create a variable \u2014 by making one and removing it immediately, which is the only honest test \u2014 and reads every collection with its modes.</p>\n<h3 id=\"h-write-where\">Where to write</h3>\n<p>Then you choose the address:</p>\n<ul>\n  <li><b>Collection</b> \u2014 any collection in the file, or <i>New collection\u2026</i> with a name of your own.</li>\n  <li><b>Group</b> \u2014 optional. Leave it empty and ramps sit at the root of the collection as <code>Blue/500</code>. Nesting works: <code>Core/Colours</code>.</li>\n  <li><b>Mode</b> \u2014 only appears when the collection has more than one, so you cannot flood a dark theme with light values by accident.</li>\n</ul>\n<p>A line underneath shows exactly what a variable will be called and how many ramps already sit at that address. If ramps on the desk came from this file, the address is pre-filled from where they came from.</p>\n<h3 id=\"h-write-list\">2 \u00b7 What will be written</h3>\n<p>One row per ramp, each with a tag saying what will happen: <b>New</b>, <b>Update</b>, <b>Renamed</b>, <b>Updated in place</b>. Unticked rows go pale, drop all their controls and carry a single <b>Will be skipped</b> tag.</p>\n<p>A warm <b>9 in file</b> marker appears when the group in Figma does not hold exactly eleven variables. Hover it to see how many will be created and how many sit outside the 50\u2026950 scale.</p>\n<h3 id=\"h-write-conflicts\">Name conflicts</h3>\n<p>If a ramp's name is already in use at that address, a dialog opens with four choices per ramp: update the existing values, rename yours, rename the one in Figma, or skip it. The explanation under the dropdown changes with the choice, and a name field appears for the two renames.</p>\n<h3 id=\"h-write-go\">3 \u00b7 Write</h3>\n<p>Ramps are written one call per ramp, so a failure can be pinned to a single ramp rather than leaving you guessing. Afterwards everything is <b>read back out of the file and compared</b> \u2014 names, values, ids \u2014 and the result says how many matched. Anything that went differently but did not fail is reported too.</p>\n<h2 id=\"h-overwrite\" data-group=\"The reskin\" data-nav=\"Overwriting in place\">Overwriting in place</h2>\n<p class=\"lead\">This is the feature the rest of the tool exists to serve. Read it once even if you skip everything else.</p>\n<h3 id=\"h-overwrite-why\">The problem it solves</h3>\n<p>You are rebranding. A Figma file holds a colour system, and hundreds of layers point at those variables \u2014 fills, strokes, effects. Other variables alias them. Other files consume them through the published library. The new palette is ready.</p>\n<p>Write it as a new set of variables and you have created a second colour system next to the first. Nothing in the file repaints. Every layer still points at the old variables, and someone has to walk through the file relinking them by hand. That is days of work, and it is the kind of work that gets nine tenths done and then quietly abandoned.</p>\n<h3 id=\"h-overwrite-how\">What it does instead</h3>\n<p>Tick <b>Overwrite ramp in Figma</b> on a row and that ramp is written onto the very variables it was read from, addressed by <b>id</b> rather than by name.</p>\n<p>A variable id in Figma survives both a rename and a value change. So when the colour underneath changes, everything that already points at that id keeps pointing at it:</p>\n<ul>\n  <li>fills, strokes and effects on layers \u2014 they repaint on their own, immediately;</li>\n  <li>aliases from other variables \u2014 semantic tokens like <code>surface/raised</code> pointing at <code>Colours/grey/100</code> keep resolving;</li>\n  <li>the published key other files use \u2014 library consumers pick the change up on update, with no relinking.</li>\n</ul>\n<p>Nothing needs to be relinked because nothing was ever unlinked. That is the whole trick, and it is why the tool goes to the trouble of remembering ids at import.</p>\n<h3 id=\"h-overwrite-rename\">Renaming while overwriting</h3>\n<p>You can rename the ramp too. A rename keeps the same ids, so the links hold exactly as before \u2014 <code>Colours/blue/500</code> becomes <code>Colours/lavander/500</code>, and every layer using it carries on without noticing.</p>\n<div class=\"note warm\">\n  <p>A group in Figma is only a prefix in a variable's name, not a container. So anything in that group which is <b>not</b> part of the ramp \u2014 a stray <code>colours/blue/base</code>, say \u2014 does not travel with the rename. It stays behind under the old prefix with its old colour. The tool never deletes it and always tells you it happened.</p>\n</div>\n<h3 id=\"h-overwrite-uneven\">When the group is not eleven variables</h3>\n<p>Real files are untidy. A group might hold nine variables, or twelve, or use a 1\u201312 scale from another system.</p>\n<ul>\n  <li><b>Fewer than eleven</b> \u2014 the ones that were imported are overwritten, and the missing tones are created alongside them. You end up with a complete ramp and the existing links intact.</li>\n  <li><b>More than eleven</b> \u2014 the eleven the ramp holds are overwritten; the extras are left exactly as they are, still carrying the old colours. They are listed by name in the result.</li>\n</ul>\n<p>Either way you get a full 50\u2026950 ramp without breaking a single link, and the leftovers can be tidied on the semantic layer afterwards. That is a far smaller job than relinking a file.</p>\n<h3 id=\"h-overwrite-when\">When it is offered \u2014 and when it is not</h3>\n<p>The switch is only available when overwriting can actually work. Otherwise it is greyed out and explains itself:</p>\n<ul>\n  <li><b>Different file</b> \u2014 the ramp was read from another file, and ids are meaningless outside the file that issued them.</li>\n  <li><b>Grew from a single colour</b> \u2014 there is no set of eleven variables to write onto.</li>\n  <li><b>No file connected</b> \u2014 connect one first.</li>\n</ul>\n<p>It is off by default. Overwriting variables in a shared file is not something to do by accident.</p>\n<h3 id=\"h-overwrite-undo\">Getting back</h3>\n<p>There is no undo inside this tool. Once values are written, the old colours are gone from the file. <b>Figma's own undo</b> is the way back, in the Figma window, straight after the write.</p>\n<p>Before a real reskin: duplicate the file, or work on a branch. Then a bad result costs a click rather than an afternoon.</p>\n<h2 id=\"h-warnings\" data-nav=\"The warnings before a write\">The warnings before a write</h2>\n<p>Pressing the write button opens <b>Before writing</b> whenever there is something worth knowing. Each ramp with something to say gets a card, and each consequence gets a plain sentence and a label:</p>\n<dl>\n  <dt>Overwrites in place</dt>\n  <dd>Ids stay, links hold, but the old colours are gone.</dd>\n  <dt>Renames variables</dt>\n  <dd>From the old Figma name to the new one.</dd>\n  <dt>Completes the scale</dt>\n  <dd>Fewer tones were imported than the ramp has; the rest will be created.</dd>\n  <dt>Leaves extras behind</dt>\n  <dd>Variables outside the 50\u2026950 scale, untouched and still old.</dd>\n  <dt>Writes a duplicate</dt>\n  <dd>The ramp came from this file but Overwrite is off, so nothing in the file will repaint. Usually a sign you meant to tick the box.</dd>\n  <dt>Uneven set in the file \u00b7 Renames the existing ramp</dt>\n  <dd>For ramps written by name rather than by id.</dd>\n</dl>\n<p>Every card has a checkbox. Drop a doubtful ramp from the write right there \u2014 the totals and the button update as you go, and the list behind the dialog follows. If there is nothing to warn about, the write simply runs.</p>\n<h2 id=\"h-recipes\" data-group=\"Reference\" data-nav=\"Two common jobs\">Two common jobs</h2>\n<h3 id=\"h-recipe-reskin\">Reskinning an existing file</h3>\n<ol class=\"steps\">\n  <li>Duplicate the Figma file, or open a branch.</li>\n  <li><b>From Figma</b> \u2192 paste the link \u2192 tick the groups that make up the current system \u2192 import.</li>\n  <li>Reshape each ramp: new key colours, or the curves, or both.</li>\n  <li><b>Export ramps</b> \u2192 connect the same file. The address is pre-filled from where the ramps came from.</li>\n  <li>Tick <b>Overwrite ramp in Figma</b> on every ramp you want to land on its originals.</li>\n  <li>Read the warnings, then write. Check the file \u2014 layers should already be repainted.</li>\n</ol>\n<h3 id=\"h-recipe-brand\">A new system from a brand image</h3>\n<ol class=\"steps\">\n  <li><b>From an image</b> \u2192 drop the brand board in.</li>\n  <li>Set how many key colours you want; drag markers on the plot until the crosses sit on the colours you recognise.</li>\n  <li>Leave <i>Also return the dominant neutral</i> on \u2014 you will want a grey ramp.</li>\n  <li><b>Generate N ramps</b>, then check the contrast matrix on each and fix what fails.</li>\n  <li><b>Save work</b>, then export or write to Figma.</li>\n</ol>\n<h2 id=\"h-trouble\" data-nav=\"When something is wrong\">When something is wrong</h2>\n<dl>\n  <dt>Chroma will not go any higher</dt>\n  <dd>You are at the sRGB gamut edge. The curve is flat there because the colour does not exist on screen.</dd>\n  <dt>A new group appeared in Figma instead of the old one changing</dt>\n  <dd>Overwrite was off for that ramp, or the connected file is not the file it was imported from.</dd>\n  <dt>The write panel says it cannot reach Figma</dt>\n  <dd>Check three things, in order. The Cowork session must be running <b>On my computer</b> \u2014 it asks where to run a task before it starts, and a cloud session has no route to a server on your own machine. The Figma <b>desktop</b> app must be open with its MCP server enabled. The Figma connector must be authorised in Claude. Copy and Download still give you the full payload, and <b>Paste tokens</b> reads a file without any connection.</dd>\n  <dt>An imported ramp has hand edits everywhere</dt>\n  <dd>Expected. The file's colours are kept exactly, and anything the generator would not have produced is preserved as an override. Pin a different key colour to bring it back under the generator's control.</dd>\n  <dt>The snapshot says it changed since it was saved</dt>\n  <dd>The checksum does not match the contents. Loading is still allowed \u2014 what you get is whatever the file actually says.</dd>\n</dl>\n<h2 id=\"h-credits\" data-nav=\"Where the maths comes from\">Where the maths comes from</h2>\n<ul>\n  <li>Bj\u00f6rn Ottosson, <i>A perceptual color space for image processing</i> \u2014 the OKLab transforms used throughout.</li>\n  <li>Stripe, <i>Designing accessible color systems</i> \u2014 the case for building ramps on a perceptual lightness axis.</li>\n  <li>WCAG 2.1 \u2014 the contrast ratio definition behind every number the tool reports.</li>\n  <li>W3C Design Tokens Community Group format \u2014 the shape of the token export.</li>\n</ul>";
 
 /* ============================================================
    HELP — one document, a contents list that stays put
@@ -5722,6 +5917,16 @@ const STARTER = [
 /* Robust boot: a corrupt or empty saved state must never leave the
    tool blank. */
 function boot(){
+  /* printed so verify_artifact shows in one line why the Figma buttons
+     are or are not going to work, without anyone having to click them */
+  try {
+    const d = bridgeDiag();
+    console.log('[figma-colour-ramps] bridge: ' + d.code
+      + ' | window.cowork: ' + (window.cowork ? 'present' : 'absent')
+      + ' | callMcpTool: ' + (window.cowork && typeof window.cowork.callMcpTool)
+      + ' | declared tools: ' + JSON.stringify(window.__FIGMA_TOOLS__ || []));
+    if (d.code !== 'ok') console.warn('[figma-colour-ramps] ' + d.what);
+  } catch(e){}
   try { load(); } catch(e){ state.palettes=[]; }
   if (!Array.isArray(state.palettes)) state.palettes = [];
   if (state.pendingFigmaUrl){ fig().url = state.pendingFigmaUrl; }

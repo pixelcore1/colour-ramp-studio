@@ -128,6 +128,8 @@ The clustering is k-means++ in OKLab with a fixed seed, so the same image with t
 
 **From Figma** asks for a file link and then scans **every** variable collection in it. Nothing about your naming is assumed — the tool does not go looking for a collection called Primitives, it reads what is there.
 
+Big files are read in pages — a first call for the shape of the file, then slices of variables — because the bridge cuts a single reply off at about 20 KB. A progress line shows where it has got to. Nothing is written at any point.
+
 What comes back is a tree: collection, then groups, then tones, with a checkbox on every branch and every leaf. Tick a whole group to bring in a ramp. Tick a single colour to seed a new ramp from it — you will be asked for a name, since one variable is not a ramp yet.
 
 Imported ramps arrive with the file's own colours as the truth: the tool works out which tone is the key colour, generates a ramp from it, and keeps every tone the generator would not have produced as a hand edit. Import then re-export a ramp this tool made, and you get zero overrides.
@@ -352,7 +354,7 @@ You are at the sRGB gamut edge. The curve is flat there because the colour does 
 Overwrite was off for that ramp, or the connected file is not the file it was imported from.
 
 **The write panel says it cannot reach Figma**  
-Check three things, in order. The Cowork session must be running **On my computer** — it asks where to run a task before it starts, and a cloud session has no route to a server on your own machine. The Figma **desktop** app must be open with its MCP server enabled. The Figma connector must be authorised in Claude. Copy or Download still give you the full payload meanwhile.
+Check three things, in order. The Cowork session must be running **On my computer** — it asks where to run a task before it starts, and a cloud session has no route to a server on your own machine. The Figma **desktop** app must be open with its MCP server enabled. The Figma connector must be authorised in Claude. Copy and Download still give you the full payload, and **Paste tokens** reads a file without any connection.
 
 **An imported ramp has hand edits everywhere**  
 Expected. The file's colours are kept exactly, and anything the generator would not have produced is preserved as an override. Pin a different key colour to bring it back under the generator's control.

@@ -37,15 +37,15 @@ Three possible outcomes:
 | No matching tool | `TOOLS = []`, `STATUS = "No Figma MCP server is registered in this session."` | Warn clearly, **before** building: authoring, image extraction and every export still work, but **From Figma** and **Write to a Figma file** will be unavailable. Paste tokens and Copy / Download are the way round it. |
 
 State the warning in your reply as plain prose, not only inside the artifact.
-Point at the three fixes, in this order:
+Point at the fixes, in this order:
 
-1. **The session must be running *On my computer*.** Cowork asks where to run a task
-   before it starts; a cloud session has no route to an MCP server listening on the
-   user's own machine, so the Figma steps cannot work there no matter what else is
-   set up. Check this first — it is the most common cause and the least obvious.
-2. Authorise the Figma connector in connector settings.
-3. Make sure the Figma **desktop** app is running with its MCP server enabled
+1. Authorise the Figma connector in connector settings.
+2. Make sure the Figma app is running with its MCP server enabled
    (Quick Actions → `MCP` → *Enable desktop MCP server*, or Dev Mode → right sidebar).
+3. Only if they are using the **desktop** Figma MCP server rather than the remote one:
+   the session has to be running *On my computer*, since a cloud session cannot reach
+   a server listening on their own machine. The remote server works either way — so do
+   not lead with this, and do not claim it explains a failure you have not confirmed.
 
 The tool also self-heals: if the injected name is stale it probes a short list of
 conventional names at connect time and remembers whichever answers. The preflight
@@ -53,7 +53,76 @@ is what lets you *warn ahead of time* rather than after a failed click.
 
 ---
 
-## Step 2 — Build and publish the artifact
+## Step 2 — There may be nothing to build
+
+**The artifact persists.** A Cowork artifact is a file on this machine
+(`…/Claude/Artifacts/figma-colour-ramps/index.html`) that survives every session and
+keeps its own bridge. If it has been published once on this computer, the fastest and
+most reliable launch is to **open it, not rebuild it**.
+
+So start here — and search by **keyword, not by exact name**:
+
+```
+ToolSearch  query: "artifact publish html page"   max_results: 20
+```
+
+Read every result. What publishes an artifact has been named differently across
+versions of the app, so do **not** conclude anything from a `select:` on one exact
+name coming back empty. Look for any tool whose name contains `artifact`, then check
+its schema for a field that declares MCP tools — `mcp_tools` or equivalent.
+
+- **A tool with an `mcp_tools`-style field exists** → that is the publisher. Use it,
+  and go on to Step 3.
+- **A tool called `Artifact` (or similar) exists but has no way to declare MCP
+  tools** → it can render the page but cannot grant it the Figma bridge. Publishing
+  through it produces a tool where authoring works and both Figma buttons are dead.
+  Say so plainly rather than shipping that.
+- **Nothing with `artifact` in the name at all** → see below.
+
+Then, if a publisher was found, call its list-equivalent
+(`mcp__cowork__list_artifacts` where that server is present).
+
+- **An artifact with id `figma-colour-ramps` already exists** → say so and tell the
+  user to open it from the sidebar under **Artifacts** (it carries a "Cowork" label).
+  Only rebuild if the shipped HTML is newer than the artifact, or if the user reports
+  the panel saying the Figma MCP server did not answer — that means the tool name
+  baked into its allowlist has gone stale.
+- **It does not exist** → go to Step 3 and publish it.
+
+### If the artifact tools are not in this session
+
+This is the one failure everybody hits, so read it carefully rather than guessing.
+
+The publishing tools are **provisioned per session by the server**, and their names
+have changed between versions of the app — so search by keyword first (above) before
+deciding they are missing. The desktop app registers them at startup, but a given session may be
+created without them — the same account, the same machine, the same app. Sessions
+created earlier keep working while a brand-new one is denied. So the absence of these
+tools is **not** evidence that the user is in the cloud, on the wrong surface, or has
+something misconfigured. Do not tell them it is.
+
+What actually helps, in order:
+
+1. **Open the existing artifact from the Artifacts view.** Cowork sidebar → Artifacts
+   → "Figma Colour Ramps". It runs with a full bridge regardless of which tools this
+   chat session was given. If it exists, this alone solves the problem.
+2. **Start a session that is artifact-capable by construction.** Artifacts view →
+   **New artifact** → **Create Cowork artifact**. A session opened that way has the
+   artifact tools, and the skill can be run inside it.
+3. **Retry once.** Provisioning can lag in a freshly created session. Ask the user to
+   send one more message and run the ToolSearch again before concluding anything.
+4. **Check the app is current.** Live artifacts need a recent Claude Desktop; they are
+   desktop-only and on paid plans.
+
+Never hand over the HTML as a plain file instead. A file has no
+`window.cowork.callMcpTool`, so both Figma buttons are dead in it, and the editor's
+generic `Artifact` tool produces exactly the same dead page. Without a bridge the tool
+still builds ramps, reads images, checks contrast and exports every format, and
+**Paste tokens** imports without any connection — say that, and leave it there.
+
+---
+
+## Step 3 — Build and publish
 
 1. Read `assets/figma-colour-ramps.html` from this skill's directory.
 2. Copy it to your outputs folder.
@@ -71,18 +140,35 @@ is what lets you *warn ahead of time* rather than after a failed click.
    Use a scripted substitution (python/node), never hand-editing — the file is large
    and a stray character breaks the whole artifact.
 
-4. Call `create_artifact` with:
+4. Call `mcp__cowork__list_artifacts` first. If one with id `figma-colour-ramps`
+   already exists, use `mcp__cowork__update_artifact`; otherwise
+   `mcp__cowork__create_artifact`. Arguments either way:
    - `id`: `figma-colour-ramps`
    - `html_path`: the copied file
    - `mcp_tools`: `["mcp__<resolved-session-id>__use_figma"]`, or omit entirely when
      no server was found. **This allowlist is required** — the artifact cannot call a
-     tool that is not declared here.
+     tool that is not declared here, even though the name is also injected into the
+     HTML. Both are needed: the allowlist grants permission, the injected name tells
+     the tool what to call.
 
-If an artifact with that id already exists, use `update_artifact` instead.
+5. **Always** call `mcp__cowork__verify_artifact` with the same id, and read the log.
+   The tool prints one line at boot that settles the question:
+
+   ```
+   [figma-colour-ramps] bridge: ok | window.cowork: present | callMcpTool: function | declared tools: ["mcp__…__use_figma"]
+   ```
+
+   - `bridge: ok` — done, both Figma buttons will work.
+   - `bridge: no-runtime`, `window.cowork: absent` — it was **not** published through
+     Cowork. Republish with `mcp__cowork__create_artifact`; do not tell the user the
+     session lacks a runtime until you have tried that tool by its exact name.
+   - `bridge: no-tools` — published correctly, but `mcp_tools` was empty or the
+     binding was not injected. Redo step 3 with the resolved Figma tool name.
+   - No log at all — the artifact is not open; that alone is not a failure.
 
 ---
 
-## Step 3 — Hand over
+## Step 4 — Hand over
 
 Say in two or three sentences what the tool does and where to start. Point at the
 **Help** link at the bottom left — the full manual lives inside the tool, so do not
@@ -90,6 +176,9 @@ repeat it in chat. Mention the Figma warning here if Step 1 raised one.
 
 The desk starts **empty**, with four ways in: *New ramp*, *From an image*,
 *From Figma*, *Starter set*.
+
+Tell them once that it now lives in the Cowork sidebar under **Artifacts** and can be
+reopened from there any time — no need to run this skill again in a future session.
 
 ---
 
@@ -119,7 +208,10 @@ Headline settings are the count (3–8) and two toggles; the clustering paramete
 under *More settings*. **Generate N ramps** makes one ramp per ticked colour.
 
 **Reading ramps out of Figma.** *From Figma* takes a file link and scans **every**
-collection — no naming is assumed. The result is a tree of collection → groups →
+collection — no naming is assumed. The scan is **paged**: one small call for the shape
+of the file, then slices of 60 variables in a compact array form. That is not an
+optimisation — the bridge truncates a tool result at about 20 KB, and a real design
+system in one reply comes back cut in half and stops being JSON. The result is a tree of collection → groups →
 tones with a checkbox on every branch and leaf. A whole group becomes a ramp; a
 single variable seeds a new ramp under a name you give. Imported ramps keep the
 file's own colours exactly: the tool picks a key colour, generates a ramp, and stores
@@ -190,13 +282,28 @@ and CSS custom properties. All four follow the chosen collection and group.
 
 ## Troubleshooting
 
+- **The skill says it cannot build anything** — `mcp__cowork__create_artifact` was not
+  provisioned into this session. That is a server-side capability gate, not a user
+  error. Point at the Artifacts view first: the artifact is already on their machine
+  and opens with a working bridge. See Step 2.
 - **"Figma is not connected in this session"** — Step 1 found no server. Rebuild the
   artifact after authorising the connector.
 - **"The Figma MCP server did not answer"** — the injected name was stale *and* none
   of the fallbacks matched. Re-run Step 1 and rebuild.
-- **"This view cannot reach Figma from here"** — the artifact is open outside
-  Cowork's MCP bridge, or the session is running in the cloud rather than
-  *On my computer*. Use Copy / Download, or Paste tokens for import.
+- **"This view cannot reach Figma from here"** — the page is not running as a Cowork
+  artifact: handed over as a file, or published with the editor's generic `Artifact`
+  tool. Open the real one from the Artifacts view, or republish through
+  `mcp__cowork__create_artifact`.
+- **The artifact opens but says the Figma MCP server did not answer** — it was
+  published in an earlier session and the tool name in its allowlist has gone stale.
+  Republish it from a session that has the artifact tools; the id is per-session and
+  cannot be baked in.
+- **"Figma is not connected in this session" right after launch, with the connector
+  authorised** — read the message: the tool now names the cause itself. *"This page is
+  not running as a Cowork artifact"* means it was published with the wrong tool or
+  handed over as a file — republish with `mcp__cowork__create_artifact`. *"no Figma
+  MCP tool was declared for this view"* means the publish was right but `mcp_tools`
+  or the injected binding was empty — redo step 3.
 - **Write refused after connecting** — the seat on that file is view or comment only;
   variables need edit rights.
 - **A new group appeared instead of the old one changing** — *Overwrite* was off for
@@ -207,6 +314,9 @@ and CSS custom properties. All four follow the chosen collection and group.
 - **The extractor returns fewer colours than asked** — the image holds that few
   distinct hues at the current separation. Lower *Min hue separation*.
 - **The extractor returns almost nothing** — a desaturated image; lower *Min chroma*.
+- **Import fails with a wall of JSON** — an older build read the whole file in one
+  call and the bridge cut it off at 20 KB. Republish the artifact from this skill;
+  the scan is paged now.
 - **An imported ramp is covered in hand edits** — expected. The file's colours are
   kept exactly and anything the generator would not have produced is preserved.
 
